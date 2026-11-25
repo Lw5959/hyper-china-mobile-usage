@@ -3,7 +3,7 @@ package local.cmcc.usage;
 import android.Manifest;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
-import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -22,6 +22,7 @@ import android.telephony.SubscriptionManager;
 import android.text.format.DateFormat;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
 import android.view.WindowInsets;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.Button;
@@ -32,6 +33,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -44,11 +46,13 @@ public final class SetupActivity extends Activity {
     private TextView trafficTime;
     private TextView balance;
     private TextView balanceTime;
+    private Button carrierButton;
     private Button authorize;
     private Switch displaySwitch;
     private Switch launcherSwitch;
     private List<MobileSim.Card> cards = Collections.emptyList();
     private int selectedSubscription = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+    private Carrier currentCarrier;
     private final ContentObserver readerObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
         @Override
         public void onChange(boolean selfChange) {
@@ -80,6 +84,7 @@ public final class SetupActivity extends Activity {
         content.addView(title);
         connection = text("", 14, R.color.accent);
         connection.setPadding(dp(11), dp(6), dp(11), dp(6));
+        connection.setCompoundDrawablePadding(dp(8));
         connection.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22000000),
                 surface(R.color.accent_surface, 15), null));
         connection.setOnClickListener(view -> showNumbers());
@@ -105,11 +110,9 @@ public final class SetupActivity extends Activity {
         addBelow(balanceCard, balanceTime, 7, -1);
         addBelow(content, balanceCard, 11, -1);
 
-        Button carrier = actionButton("打开中国移动", this::openCarrier,
+        carrierButton = actionButton("", this::openCarrier,
                 R.color.accent, R.color.on_accent);
-        addBelow(content, carrier, 12, -1);
-        TextView source = text("无障碍读取「余量查询」和「余额查询」。", 13, R.color.muted);
-        addBelow(content, source, 5, -1);
+        addBelow(content, carrierButton, 12, -1);
         authorize = actionButton("", this::repairPermissions,
                 R.color.accent_surface, R.color.accent);
         addBelow(content, authorize, 7, -1);
@@ -231,12 +234,17 @@ public final class SetupActivity extends Activity {
         boolean reader = readerEnabled && readerConnected();
         cards = granted ? MobileSim.active(this) : Collections.emptyList();
         MobileSim.Card sim = selectedCard();
+        currentCarrier = sim == null ? null : sim.carrier;
         String label = !granted ? "识别 SIM 需要电话权限"
-                : sim == null ? "未识别到中国移动 SIM" : "中国移动　" + sim.label();
+                : sim == null ? "未识别到运营商 SIM" : sim.label();
+        connection.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                0, 0, cards.size() > 1 ? R.drawable.ic_sim_dropdown : 0, 0);
         String status = !readerEnabled ? "读取服务未开启"
                 : reader ? "读取服务已开启 · 已连接" : "读取服务已开启 · 未连接";
         connection.setText(label + "\n" + status);
         connection.setClickable(sim != null);
+        carrierButton.setVisibility(currentCarrier == null ? View.GONE : View.VISIBLE);
+        carrierButton.setText(currentCarrier == null ? "" : "打开" + currentCarrier.label);
         authorize.setText(!granted ? "授予电话权限"
                 : readerEnabled ? "读取服务设置" : "手动开启读取服务");
 
@@ -248,15 +256,26 @@ public final class SetupActivity extends Activity {
         traffic.setText(trafficReady ? stored.traffic + " " + UNITS[stored.unit] : "待查询");
         boolean totalReady = sameSim && stored.hasTotal(now);
         cap.setVisibility(totalReady ? View.VISIBLE : View.GONE);
-        cap.setText(totalReady ? "总额 " + stored.totalGb + " GB" : "");
-        String missing = sim != null && sim.number == null ? "系统暂未提供手机号" : null;
+        cap.setText(totalReady ? "总额 " + totalAmount(stored) : "");
         trafficTime.setText(trafficReady ? updateTime(stored.trafficTime)
-                : missing != null ? missing : "打开「余量查询」");
+                : queryHint(sim, currentCarrier == null ? null : currentCarrier.trafficPage));
         balance.setText(balanceReady ? BigDecimal.valueOf(stored.balanceCents, 2).toPlainString() + " 元" : "待查询");
         balanceTime.setText(balanceReady ? updateTime(stored.balanceTime)
-                : missing != null ? missing : "打开「余额查询」");
+                : queryHint(sim, currentCarrier == null ? null : currentCarrier.balancePage));
         displaySwitch.setChecked(Snapshot.panelEnabled(this));
         launcherSwitch.setChecked(launcherHidden());
+    }
+
+    private String queryHint(MobileSim.Card sim, String page) {
+        if (sim != null && sim.number == null) return "系统暂未提供手机号";
+        return page == null ? "" : "打开「" + page + "」";
+    }
+
+    private static String totalAmount(Snapshot stored) {
+        if (stored.totalBytes < 0 || stored.totalBytes >= (1L << 30)) return stored.totalGb + " GB";
+        int unit = stored.totalBytes >= (1L << 20) ? 2 : stored.totalBytes >= (1L << 10) ? 1 : 0;
+        return BigDecimal.valueOf(stored.totalBytes).divide(BigDecimal.valueOf(1L << (10 * unit)),
+                2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + " " + UNITS[unit];
     }
 
     private String updateTime(long timestamp) {
@@ -276,7 +295,8 @@ public final class SetupActivity extends Activity {
             return;
         }
         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        Toast.makeText(this, R.string.reader_settings_hint, Toast.LENGTH_LONG).show();
+        Toast.makeText(this, getString(R.string.reader_settings_hint, getString(R.string.app_name)),
+                Toast.LENGTH_LONG).show();
     }
 
     private MobileSim.Card selectedCard() {
@@ -291,25 +311,77 @@ public final class SetupActivity extends Activity {
     }
 
     private void showNumbers() {
+        MobileSim.Card sim = selectedCard();
+        if (sim == null) return;
         if (cards.size() == 1) {
             showNumber(cards.get(0));
-        } else if (!cards.isEmpty()) {
-            String[] labels = new String[cards.size()];
-            for (int index = 0; index < cards.size(); index++) labels[index] = cards.get(index).label();
-            new AlertDialog.Builder(this).setTitle("选择移动卡")
-                    .setItems(labels, (dialog, index) -> {
-                        MobileSim.Card card = cards.get(index);
-                        selectedSubscription = card.subscriptionId;
-                        refresh();
-                        showNumber(card);
-                    }).show();
+            return;
         }
+        LinearLayout sheet = numberSheet("选择号码");
+        Dialog dialog = sheetDialog(sheet);
+        for (MobileSim.Card card : cards) {
+            addNumberChoice(sheet, dialog, card.label(), card == sim, () -> {
+                selectedSubscription = card.subscriptionId;
+                refresh();
+            });
+        }
+        addBelow(sheet, actionButton("查看号码", () -> {
+            dialog.dismiss();
+            showNumber(sim);
+        }, R.color.surface, R.color.accent), 6, -1);
+        showSheet(dialog);
     }
 
     private void showNumber(MobileSim.Card card) {
-        new AlertDialog.Builder(this).setTitle("中国移动　SIM " + (card.slot + 1))
-                .setMessage(card.number == null ? "系统暂未提供手机号" : card.number)
-                .setPositiveButton("关闭", null).show();
+        LinearLayout sheet = numberSheet(card.carrier.label + "　SIM " + (card.slot + 1));
+        Dialog dialog = sheetDialog(sheet);
+        addBelow(sheet, text(card.number == null ? "系统暂未提供手机号" : card.number, 19, R.color.ink), 10, -1);
+        addBelow(sheet, actionButton("关闭", dialog::dismiss, R.color.accent_surface, R.color.accent), 12, -1);
+        showSheet(dialog);
+    }
+
+    private LinearLayout numberSheet(String title) {
+        LinearLayout sheet = card();
+        TextView heading = text(title, 19, R.color.ink);
+        heading.setTypeface(null, Typeface.BOLD);
+        heading.setAccessibilityHeading(true);
+        sheet.addView(heading);
+        return sheet;
+    }
+
+    private Dialog sheetDialog(LinearLayout sheet) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCanceledOnTouchOutside(true);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setPadding(dp(12), dp(8), dp(12), dp(12));
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(sheet, new ScrollView.LayoutParams(-1, -2));
+        dialog.setContentView(scroll);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.setGravity(Gravity.BOTTOM);
+            window.setDimAmount(0.4f);
+        }
+        return dialog;
+    }
+
+    private static void showSheet(Dialog dialog) {
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) window.setLayout(-1, -2);
+    }
+
+    private void addNumberChoice(LinearLayout sheet, Dialog dialog, String label, boolean selected, Runnable choose) {
+        Button row = actionButton(label, () -> {
+            dialog.dismiss();
+            choose.run();
+        }, selected ? R.color.accent_surface : R.color.canvas, selected ? R.color.accent : R.color.ink);
+        row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(13), dp(6), dp(13), dp(6));
+        row.setSelected(selected);
+        addBelow(sheet, row, 8, -1);
     }
 
     private boolean readerAuthorized() {
@@ -351,9 +423,10 @@ public final class SetupActivity extends Activity {
     }
 
     private void openCarrier() {
-        Intent launch = getPackageManager().getLaunchIntentForPackage(MobileReader.CARRIER_PACKAGE);
+        if (currentCarrier == null) return;
+        Intent launch = getPackageManager().getLaunchIntentForPackage(currentCarrier.packageName);
         if (launch == null) {
-            Toast.makeText(this, "请先安装中国移动 App", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "请先安装" + currentCarrier.label + " App", Toast.LENGTH_SHORT).show();
             return;
         }
         startActivity(launch);

@@ -1,6 +1,6 @@
 id=china_mobile_usage_panel
-name=澎湃移动卡余量
-version=1.3.5
-versionCode=15
+name=澎湃 SIM 卡余量查询
+version=1.4.0
+versionCode=16
 author=lw59
-description=在澎湃控制中心显示中国移动的流量余量和话费余额。
+description=在澎湃控制中心显示中国移动、中国电信和中国联通的流量余量与话费余额。

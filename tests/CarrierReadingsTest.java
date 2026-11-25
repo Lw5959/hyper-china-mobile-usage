@@ -41,11 +41,73 @@ public final class CarrierReadingsTest {
                 "查询账号与 SIM 不同时拒绝同步");
         check(AccountPhone.inHeader(Arrays.asList("138****5678", "139****4321"), 2) == null,
                 "多个冲突账号拒绝同步");
-        System.out.println("通过 14 组套餐读数、原生校正字节数和手机号匹配测试");
+        telecomQueries();
+        unicomQueries();
+        telecomVisits();
+        System.out.println("通过三家运营商查询页、校正字节数和账号匹配测试");
+    }
+
+    private static void telecomQueries() {
+        check(Carrier.forSim("460", "3") == Carrier.TELECOM && Carrier.forSim("460", "11") == Carrier.TELECOM
+                && Carrier.forSim("460", "02") == Carrier.MOBILE, "按 SIM 归属选择运营商");
+        check("181****6789".equals(CarrierReadings.homeAccount(Carrier.TELECOM, Arrays.asList(
+                "手机", "181****6789福建", "切换号码", "账户余额", "剩余通用流量"))), "电信首页确认号码");
+        check("181****6789".equals(CarrierReadings.homeAccount(Carrier.TELECOM, Arrays.asList(
+                "181****6789", "切换", "12.34元", "账户余额", "400 MB", "剩余通用流量"))),
+                "电信新版首页的切换入口也能确认当前号码");
+        CarrierReadings flow = parse(Carrier.TELECOM, "流量查询", "我的套餐", "国内通用流量",
+                "本月剩余", "400", "MB", "已用 0KB｜总量 400MB", "主套餐", "剩余200MB/共200MB");
+        check(flow != null && "400".equals(flow.trafficValue) && flow.trafficUnit == 2
+                && flow.totalBytes == 419_430_400L && flow.usedBytes == 0, "读取电信国内通用流量的汇总");
+        CarrierReadings fee = parse(Carrier.TELECOM, "账户余额", "10000", "余额说明", "12.34", "元",
+                "去充值", "本月已消费", "8.00元");
+        check(fee != null && Long.valueOf(1234).equals(fee.balanceCents), "读取电信查询页余额");
+        check(parse(Carrier.TELECOM, "账户余额", "12.34元", "去充值") == null, "忽略电信首页余额");
+        check(parse(Carrier.TELECOM, "流量查询", "国内通用流量", "本月剩余 1GB",
+                "已用 2GB|总量 1GB") == null, "已有流量超过总量时拒绝校正");
+        check(parse(Carrier.TELECOM, "流量查询", "国内通用流量", "本月剩余 400MB",
+                "已用 0KB|总量 400MB", "当前查询过于频繁，请稍后再试。") == null,
+                "限流页面的旧读数不更新快照");
+    }
+
+    private static void unicomQueries() {
+        check(Carrier.forSim("460", "01") == Carrier.UNICOM && Carrier.forSim("460", "06") == Carrier.UNICOM
+                && Carrier.forSim("461", "01") == null, "联通卡归属和非支持 SIM");
+        check("186****1234".equals(CarrierReadings.homeAccount(Carrier.UNICOM, Arrays.asList(
+                "首页", "186****1234", "剩余话费", "56.78", "剩余通用流量", "400MB"))),
+                "联通首页提供查询页无障碍节点中缺少的号码");
+        CarrierReadings flow = parse(Carrier.UNICOM, "186****1234", "查询时间：2026-01-01 10:00:00",
+                "流量", "语音", "短信", "通用流量⑦", "剩余：400 MB", "已用：0MB", "定向流量", "剩余：1 GB");
+        check(flow != null && "400".equals(flow.trafficValue) && flow.totalBytes == 419_430_400L
+                && "186****1234".equals(flow.account), "联通流量按查询页账号保存");
+        CarrierReadings fee = parse(Carrier.UNICOM, "剩余话费", "186****1234", "查询时间：2026-01-01 10:00:00",
+                "剩余话费", "¥", "56.78", "去交费", "上月结转话费", "65.78");
+        check(fee != null && Long.valueOf(5678).equals(fee.balanceCents)
+                && "186****1234".equals(fee.account), "联通余额只读去交费上方的汇总");
+        check(parse(Carrier.UNICOM, "186****1234", "截至 2026/01/01 10:00", "剩余话费",
+                "56.78元", "去交费") == null, "忽略联通首页的读数");
+    }
+
+    private static void telecomVisits() {
+        QueryVisit visit = new QueryVisit("com.ct.client.", "com.ct.client.activity.MainActivity",
+                "com.ct.client.selfservice5.activity.MealAllowanceActivityBlue",
+                "com.ct.client.selfservice5.activity.BillBalanceActivity");
+        visit.seeHomeAccount(1, "181****6789");
+        visit.windowChanged("android.widget.FrameLayout");
+        check("181****6789".equals(visit.queryAccount(2, true))
+                && visit.queryAccount(2, false) == null && visit.queryAccount(3, true) == null,
+                "缺少首页 Activity 事件时仍可按页面确认账号，且只关联已识别的查询窗口");
+        visit.seeHomeAccount(1, "181****6789");
+        visit.windowChanged("com.ct.client.login.activity.SwitchUserActivity");
+        check(visit.queryAccount(4, false) == null, "切换账号时清除旧号码");
     }
 
     private static CarrierReadings parse(String... nodes) {
-        return CarrierReadings.parse(Arrays.asList(nodes));
+        return parse(Carrier.MOBILE, nodes);
+    }
+
+    private static CarrierReadings parse(Carrier carrier, String... nodes) {
+        return CarrierReadings.parse(carrier, Arrays.asList(nodes));
     }
 
     private static void check(boolean condition, String name) {

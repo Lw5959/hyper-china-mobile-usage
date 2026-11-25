@@ -51,7 +51,7 @@ final class NativeTraffic {
                     if (systemTotal != total) return null;
                 }
                 lastPublished.put(subscriptionId, capturedAt);
-                Log.i(TAG, "中国移动套餐总额和已用量已同步至手机管家");
+                Log.i(TAG, "SIM " + (slot + 1) + " 流量基准已同步至手机管家");
                 notifyPanel(context);
             }
             if (systemTotal != total) return null;

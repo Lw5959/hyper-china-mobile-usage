@@ -14,11 +14,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class MobileReader extends AccessibilityService {
-    static final String CARRIER_PACKAGE = "com.greenpoint.android.mc10086.activity";
     static final Uri STATUS_URI = Snapshot.URI.buildUpon().path("reader-status").build();
     private static final String TAG = "CmccUsagePanel";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable read = this::readCarrierPage;
+    private final QueryVisit telecom = new QueryVisit("com.ct.client.",
+            "com.ct.client.activity.MainActivity", "com.ct.client.selfservice5.activity.MealAllowanceActivityBlue",
+            "com.ct.client.selfservice5.activity.BillBalanceActivity");
+    private final QueryVisit unicom = new QueryVisit("com.sinovatech.unicom.",
+            "com.sinovatech.unicom.basic.ui.activity.MainActivity",
+            "com.sinovatech.unicom.basic.ui.activity.WebDetailActivity");
     private boolean scheduled;
     private int trafficWindow = -1;
 
@@ -39,9 +44,13 @@ public final class MobileReader extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event != null && CARRIER_PACKAGE.contentEquals(event.getPackageName() == null ? "" : event.getPackageName())) {
-            schedule();
+        Carrier carrier = event == null ? null : Carrier.forPackage(event.getPackageName());
+        if (carrier == null) return;
+        QueryVisit visit = visitFor(carrier);
+        if (visit != null && event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            visit.windowChanged(event.getClassName());
         }
+        schedule();
     }
 
     private void schedule() {
@@ -59,25 +68,39 @@ public final class MobileReader extends AccessibilityService {
         }
         try {
             if (root.getWindowId() != trafficWindow) trafficWindow = -1;
-            if (root.getPackageName() == null || !CARRIER_PACKAGE.contentEquals(root.getPackageName())) {
-                trace("活动窗口不属于中国移动");
-                return;
-            }
+            Carrier carrier = Carrier.forPackage(root.getPackageName());
+            if (carrier == null) return;
+            List<MobileSim.Card> cards = MobileSim.active(this);
+            if (cards.stream().noneMatch(card -> card.carrier == carrier && card.number != null)) return;
             List<String> text = new ArrayList<>();
             collect(root, text, 0);
-            CarrierReadings readings = CarrierReadings.parse(text);
+            int window = root.getWindowId();
+            QueryVisit visit = visitFor(carrier);
+            if (visit != null) {
+                String homeAccount = CarrierReadings.homeAccount(carrier, text);
+                if (homeAccount != null) {
+                    visit.seeHomeAccount(window, homeAccount);
+                    return;
+                }
+            }
+            CarrierReadings readings = CarrierReadings.parse(carrier, text);
             if (readings == null) {
-                trace("查询页读数未就绪，节点数=" + text.size()
-                        + "，余量页=" + text.contains("余量查询") + "，余额页=" + text.contains("余额查询"));
+                trace(carrier.label + "查询页读数未就绪，节点数=" + text.size());
                 return;
             }
-            MobileSim.Card sim = MobileSim.match(MobileSim.active(this), readings.account);
+            boolean traffic = readings.trafficValue != null;
+            String account = readings.account;
+            if (visit != null) {
+                if (account == null) account = visit.queryAccount(window, traffic);
+                else visit.clear();
+            }
+            MobileSim.Card sim = MobileSim.match(cards, carrier, account);
+            int seenWindow = traffic ? window : -1;
             if (sim != null) {
-                int seenWindow = readings.trafficValue != null ? root.getWindowId() : -1;
                 Snapshot.save(this, sim, readings, seenWindow != trafficWindow);
                 trafficWindow = seenWindow;
             } else {
-                trace("查询页的账号未匹配本机移动卡");
+                trace(carrier.label + (traffic ? "流量" : "话费") + "查询账号未匹配本机 SIM");
             }
         } finally {
             recycleLegacyNode(root);
@@ -86,6 +109,14 @@ public final class MobileReader extends AccessibilityService {
 
     private static void trace(String message) {
         if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, message);
+    }
+
+    private QueryVisit visitFor(Carrier carrier) {
+        return switch (carrier) {
+            case TELECOM -> telecom;
+            case UNICOM -> unicom;
+            case MOBILE -> null;
+        };
     }
 
     private void collect(AccessibilityNodeInfo node, List<String> text, int depth) {
@@ -117,6 +148,8 @@ public final class MobileReader extends AccessibilityService {
     public void onInterrupt() {
         handler.removeCallbacks(read);
         scheduled = false;
+        telecom.clear();
+        unicom.clear();
     }
 
     @Override

@@ -28,7 +28,7 @@ while active; do
   /system/bin/logcat -b main -T 1 -v brief "--uid=$uid" -s 'CmccUsagePanel:I' '*:S' |
     while IFS= read -r event && active; do
       case "$event" in
-        *": 中国移动流量基准已更新")
+        *": 运营商流量基准已更新"|*": 中国移动流量基准已更新")
           "$BUSYBOX" timeout 8 /system/bin/content query --user 0 --uri "$uri" >/dev/null 2>&1
           ;;
       esac

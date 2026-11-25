@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">移动卡余量</string>
-    <string name="reader_name">移动卡余量读取</string>
-    <string name="module_description">同步中国移动的流量和话费。手机管家扣减流量。</string>
-    <string name="reader_description">读取中国移动 App 的流量和话费查询结果。</string>
-    <string name="reader_settings_hint">选择「移动卡余量读取」。</string>
+    <string name="app_name">澎湃 SIM 卡余量查询</string>
+    <string name="module_description">将运营商查询的流量和话费同步到澎湃控制中心。</string>
+    <string name="reader_description">读取中国移动、中国电信和中国联通 App 的流量与话费查询结果。</string>
+    <string name="reader_settings_hint">选择「%1$s」。</string>
     <string-array name="xposed_scope">
         <item>com.miui.securitycenter</item>
     </string-array>

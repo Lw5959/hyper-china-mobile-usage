@@ -15,15 +15,18 @@ final class MobileSim {
         final int slot;
         final int subscriptionId;
         final String number;
+        final Carrier carrier;
 
-        Card(int slot, int subscriptionId, String number) {
+        Card(int slot, int subscriptionId, String number, Carrier carrier) {
             this.slot = slot;
             this.subscriptionId = subscriptionId;
             this.number = number;
+            this.carrier = carrier;
         }
 
         String label() {
-            return "SIM " + (slot + 1) + " · " + (number == null ? "号码不可用" : AccountPhone.masked(number));
+            return carrier.label + "　SIM " + (slot + 1) + " · "
+                    + (number == null ? "号码不可用" : AccountPhone.masked(number));
         }
     }
 
@@ -38,8 +41,9 @@ final class MobileSim {
             for (SubscriptionInfo entry : subscriptions) {
                 int id = entry.getSubscriptionId();
                 int slot = entry.getSimSlotIndex();
-                if (slot < 0 || id < 0 || !isChinaMobile(entry, telephony)) continue;
-                cards.add(new Card(slot, id, phoneNumber(manager, entry)));
+                if (slot < 0 || id < 0) continue;
+                Carrier carrier = carrierFor(entry, telephony);
+                if (carrier != null) cards.add(new Card(slot, id, phoneNumber(manager, entry), carrier));
             }
         } catch (SecurityException | IllegalStateException ignored) {
             // 开机或授权撤销时，等系统订阅列表就绪后再识别卡。
@@ -48,11 +52,16 @@ final class MobileSim {
         return cards;
     }
 
-    static Card match(List<Card> cards, String account) {
-        List<String> numbers = new ArrayList<>(cards.size());
-        for (Card card : cards) numbers.add(card.number);
+    static Card match(List<Card> cards, Carrier carrier, String account) {
+        List<Card> candidates = new ArrayList<>();
+        List<String> numbers = new ArrayList<>();
+        for (Card card : cards) {
+            if (card.carrier != carrier) continue;
+            candidates.add(card);
+            numbers.add(card.number);
+        }
         int index = AccountPhone.matchingIndex(account, numbers);
-        return index < 0 ? null : cards.get(index);
+        return index < 0 ? null : candidates.get(index);
     }
 
     private static String phoneNumber(SubscriptionManager manager, SubscriptionInfo entry) {
@@ -72,7 +81,7 @@ final class MobileSim {
         return AccountPhone.chinaNumber(entry.getNumber());
     }
 
-    private static boolean isChinaMobile(SubscriptionInfo entry, TelephonyManager telephony) {
+    private static Carrier carrierFor(SubscriptionInfo entry, TelephonyManager telephony) {
         String mcc = entry.getMccString();
         String mnc = entry.getMncString();
         if ((mcc == null || mcc.isEmpty() || mnc == null || mnc.isEmpty()) && telephony != null) {
@@ -82,8 +91,6 @@ final class MobileSim {
                 mnc = operator.substring(3);
             }
         }
-        String code = mnc != null && mnc.length() == 1 ? "0" + mnc : mnc;
-        return "460".equals(mcc) && ("00".equals(code) || "02".equals(code) || "04".equals(code)
-                || "07".equals(code) || "08".equals(code) || "13".equals(code));
+        return Carrier.forSim(mcc, mnc);
     }
 }

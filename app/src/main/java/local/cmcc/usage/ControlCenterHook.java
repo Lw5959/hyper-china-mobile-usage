@@ -73,7 +73,7 @@ public final class ControlCenterHook implements IXposedHookLoadPackage {
             }
             if (readings.isEmpty()) return;
             if (systemUi && showingNativeUsage) NativeTraffic.refreshVisiblePanel(context);
-            MatrixCursor result = fillMissing(original, readings);
+            MatrixCursor result = mergePanel(original, readings);
             if (result != null) {
                 call.setResult(result);
                 original.close();
@@ -85,7 +85,7 @@ public final class ControlCenterHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static MatrixCursor fillMissing(Cursor original, Map<String, PanelReading> readings) {
+    private static MatrixCursor mergePanel(Cursor original, Map<String, PanelReading> readings) {
         int slotColumn = original.getColumnIndexOrThrow("sim_slot");
         int trafficType = original.getColumnIndexOrThrow("traffic_type");
         int trafficValue = original.getColumnIndexOrThrow("traffic_value");
@@ -114,8 +114,8 @@ public final class ControlCenterHook implements IXposedHookLoadPackage {
                         row[trafficUnit] = reading.unit;
                         changed = true;
                     }
-                    if (reading.balance != null && (row[billValue] == null || row[billValue].isEmpty()
-                            || row[billType] == null || "-1".equals(row[billType]))) {
+                    if (reading.balance != null
+                            && (!reading.balance.equals(row[billValue]) || !"0".equals(row[billType]))) {
                         row[billType] = "0";
                         row[billValue] = reading.balance;
                         changed = true;

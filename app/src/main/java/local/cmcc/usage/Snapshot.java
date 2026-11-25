@@ -13,7 +13,7 @@ final class Snapshot {
     static final Uri URI = Uri.parse("content://local.cmcc.usage.snapshot/latest");
     static final String[] COLUMNS = {"slot", "traffic", "unit", "balance_cents", "subscription_id",
             "carrier_read_at", "carrier_total_bytes", "carrier_used_bytes"};
-    static final String CAPTURE_LOG = "中国移动流量基准已更新";
+    static final String CAPTURE_LOG = "运营商流量基准已更新";
     private static final long MAX_AGE_MS = 24L * 60 * 60 * 1000;
     private static final long WRITE_INTERVAL_MS = 60_000L;
 
@@ -75,7 +75,7 @@ final class Snapshot {
         }
         if (changed) {
             edit.apply();
-            android.util.Log.i("CmccUsagePanel", newTraffic ? CAPTURE_LOG : "中国移动读数已更新");
+            android.util.Log.i("CmccUsagePanel", newTraffic ? CAPTURE_LOG : "查询读数已更新");
         }
     }
 
@@ -118,6 +118,7 @@ final class Snapshot {
 
     private static SharedPreferences preferences(Context context, MobileSim.Card sim) {
         // 卡换到另一槽时沿用该订阅的缓存，显示位置由当前系统卡槽决定。
-        return context.getSharedPreferences("snapshot_" + sim.subscriptionId, Context.MODE_PRIVATE);
+        String carrier = sim.carrier == Carrier.MOBILE ? "" : "_" + sim.carrier.name();
+        return context.getSharedPreferences("snapshot_" + sim.subscriptionId + carrier, Context.MODE_PRIVATE);
     }
 }

@@ -6,4 +6,4 @@
     android:description="@string/reader_description"
     android:isAccessibilityTool="false"
     android:notificationTimeout="250"
-    android:packageNames="com.greenpoint.android.mc10086.activity" />
+    android:packageNames="com.greenpoint.android.mc10086.activity,com.ct.client,com.sinovatech.unicom.ui" />
