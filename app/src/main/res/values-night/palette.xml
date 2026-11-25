@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="canvas">#101B17</color>
+    <color name="surface">#1B2B24</color>
+    <color name="ink">#EDF6EF</color>
+    <color name="muted">#B3C7BB</color>
+    <color name="accent">#82D9AE</color>
+    <color name="on_accent">#0C2E1E</color>
+    <color name="accent_surface">#214235</color>
+    <color name="line">#32483D</color>
+    <style name="UsageTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">移动卡余量</string>
+    <string name="reader_name">移动卡余量读取</string>
+    <string name="module_description">同步中国移动的流量和话费。手机管家扣减流量。</string>
+    <string name="reader_description">读取中国移动 App 的流量和话费查询结果。</string>
+    <string name="reader_settings_hint">选择「移动卡余量读取」。</string>
+    <string-array name="xposed_scope">
+        <item>com.miui.securitycenter</item>
+    </string-array>
+</resources>
