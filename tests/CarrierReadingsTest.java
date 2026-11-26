@@ -27,9 +27,37 @@ public final class CarrierReadingsTest {
                 "余额查询页读取账户可用余额");
         CarrierReadings arrears = parse("余额查询", "账户可用余额（元） -3.07");
         check(arrears != null && Long.valueOf(-307).equals(arrears.balanceCents), "负余额含义");
+        CarrierReadings splitAccountFee = parse("余额查询", "已订业务", "138****5678", "账户可用余额", "（元）",
+                "?", "12.34", "本月已消费（元）", "56.78");
+        check(splitAccountFee != null && Long.valueOf(1234).equals(splitAccountFee.balanceCents)
+                && "138****5678".equals(splitAccountFee.account), "余额标题和单位分节点时按查询号码读取");
+        CarrierReadings mergedAccountFee = parse("余额查询", "138****5678",
+                "账户可用余额（元） ? 12.34 本月已消费（元）: 56.78");
+        check(mergedAccountFee != null && Long.valueOf(1234).equals(mergedAccountFee.balanceCents),
+                "余额和本月消费合并在一个节点时读取余额");
+        check(parse("余额查询", "账户可用余额（元）", "本月已消费（元）", "56.78") == null,
+                "可用余额缺失时不读取本月消费");
+        CarrierReadings generalFee = parse("余额查询", "充值缴费", "账单查询", "138****5678", "合户", "个人",
+                "11月", "2026", "通用余额（元）", "?", "12.34", "充值", "其他余额（元）", "56.78",
+                "信控额度", "0.00/0.00", "通用账本", "通用余额", "23.45", "上期结余", "67.89");
+        check(generalFee != null && Long.valueOf(1234).equals(generalFee.balanceCents)
+                && "138****5678".equals(generalFee.account) && generalFee.trafficValue == null,
+                "移动余额新布局读取顶部通用余额及对应号码");
+        CarrierReadings combinedFee = parse("余额查询", "通用余额(元) 余额说明 -12.34 充值› 其他余额(元) 56.78");
+        check(combinedFee != null && Long.valueOf(-1234).equals(combinedFee.balanceCents),
+                "合并节点中的充值按钮和其他余额不影响通用余额");
+        CarrierReadings splitFee = parse("余额查询", "通用余额", "（元）", "说明", "0.00");
+        check(splitFee != null && Long.valueOf(0).equals(splitFee.balanceCents), "识别分开显示的单位与零余额");
+        check(parse("余额查询", "通用余额(元)", "?", "其他余额(元)", "56.78", "信控额度", "34.56") == null,
+                "通用余额缺失时不使用其他余额或信控额度");
+        check(parse("余额查询", "通用账本", "通用余额(元)", "23.45", "上期结余", "67.89") == null
+                && parse("余额查询", "通用余额(元) 23.45 = 67.89 - 44.44") == null
+                && parse("余额查询", "通用余额", "23.45") == null,
+                "账本金额和计算式不能用作当前余额");
         check(parse("通用流量剩余 31.25GB", "话费余额 42.60元") == null, "忽略首页数值");
         check(parse("余量查询", "定向流量", "剩余 0", "已用 24GB", "国内通用流量", "加载中") == null,
                 "忽略定向流量和缺失汇总");
+        mobileCombinedPages();
         check("13812345678".equals(AccountPhone.chinaNumber("+86 138-1234-5678")), "统一系统手机号格式");
         check(AccountPhone.matchingIndex("138****5678", Arrays.asList("13987654321", "13812345678")) == 1,
                 "双移动卡按脱敏账号识别卡槽");
@@ -45,6 +73,30 @@ public final class CarrierReadingsTest {
         unicomQueries();
         telecomVisits();
         System.out.println("通过三家运营商查询页、校正字节数和账号匹配测试");
+    }
+
+    private static void mobileCombinedPages() {
+        CarrierReadings fee = parse("返回 关闭 余额查询\n已订业务 138****5678 用户 "
+                + "账户可用余额（元） ? 12.34 本月已消费（元） 98.76 温馨提示 " + "余额查询说明 ".repeat(32));
+        check(fee != null && Long.valueOf(1234).equals(fee.balanceCents) && "138****5678".equals(fee.account),
+                "移动页面合并为长描述时识别查询标题、号码和可用余额");
+        CarrierReadings flow = parse("返回 余量查询, 标题", "138****5678 用户 国内通用流量 "
+                + "剩余 31.25GB 已用 68.75GB 定向流量 剩余 90GB 已用 10GB");
+        check(flow != null && "31.25".equals(flow.trafficValue) && flow.totalBytes == 100L * 1024 * 1024 * 1024
+                && "138****5678".equals(flow.account), "合并节点中的通用流量按页面号码保存");
+        check(parse("请打开余额查询 138****5678 账户可用余额（元） 12.34") == null
+                && parse("返回 余额查询 账户可用余额（元） 本月已消费（元） 98.76") == null
+                && parse("返回 余量查询 国内通用流量 加载中 定向流量 剩余 90GB 已用 10GB") == null,
+                "合并节点缺少查询标题或汇总金额时不使用其它数据");
+        String evidence = CarrierReadings.mobileEvidence(Arrays.asList(
+                "返回 余额查询", "138****5678", "账户可用余额（元） 12.34 本月已消费（元） 98.76"));
+        check(evidence.contains("文本节点 3") && evidence.contains("余额查询、账户可用余额、本月已消费")
+                && !evidence.contains("138****5678") && !evidence.contains("12.34") && !evidence.contains("98.76"),
+                "窗口诊断只记录固定字段与计数");
+        check("余额查询".equals(CarrierReadings.mobileQueryTitle(Arrays.asList("返回", "余额查询", "关闭")))
+                && CarrierReadings.mobileQueryTitle(Arrays.asList("返回", "余量查询", "余额查询")) == null
+                && CarrierReadings.mobileQueryTitle(Arrays.asList("打开余额查询获取详单")) == null,
+                "只有明确且单一的查询标题才尝试恢复正文");
     }
 
     private static void telecomQueries() {

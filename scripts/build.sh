@@ -51,10 +51,10 @@ fi
 "$tools/apksigner" verify "$stage/module/usage.apk"
 
 cp module/module.prop module/customize.sh module/action.sh module/uninstall.sh module/hotinstall.sh \
-    module/service.sh module/boot-completed.sh module/reader.sh module/usage-monitor.sh "$stage/module/"
+    module/service.sh module/boot-completed.sh module/reader.sh module/usage-monitor.sh module/root-tools.sh "$stage/module/"
 (cd "$stage/module" && zip -q -X "$stage/china-mobile-usage-ksu.zip" \
     module.prop customize.sh action.sh uninstall.sh hotinstall.sh service.sh boot-completed.sh \
-    reader.sh usage-monitor.sh usage.apk)
+    reader.sh usage-monitor.sh root-tools.sh usage.apk)
 unzip -tq "$stage/china-mobile-usage-ksu.zip"
 version=$(sed -n 's/^version=//p' module/module.prop)
 mv "$stage/china-mobile-usage-ksu.zip" "dist/china-mobile-usage-ksu-v$version.zip"

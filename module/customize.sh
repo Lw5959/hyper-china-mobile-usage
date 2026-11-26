@@ -3,7 +3,7 @@ VECTOR=/data/adb/modules/zygisk_vector/cli
 PACKAGE=local.cmcc.usage
 SECURITY_CENTER=com.miui.securitycenter
 
-[ "$BOOTMODE" = true ] || abort "请在已启动的手机上通过 KernelSU 安装。"
+[ "${BOOTMODE:-false}" = true ] || abort "请在已启动的手机上通过 KernelSU 或 Magisk 安装。"
 
 installed=false
 pm path --user 0 "$PACKAGE" >/dev/null 2>&1 && installed=true
@@ -32,10 +32,14 @@ elif [ -x "$VECTOR" ] && "$VECTOR" status >/dev/null 2>&1 &&
   ui_print "- 已在 Vector 启用「澎湃 SIM 卡余量查询」，作用域为「手机管家」。"
 else
   ui_print "- 配套应用已安装，可在应用内查看余量。"
-  ui_print "- 在 Vector 或 LSPosed 管理器中启用「澎湃 SIM 卡余量查询」，勾选「手机管家」后重启。"
+  if [ "${KSU:-false}" = true ]; then
+    ui_print "- 在 Vector 或 LSPosed 管理器中启用「澎湃 SIM 卡余量查询」，勾选「手机管家」后重启。"
+  else
+    ui_print "- 控制中心显示需要 Magisk 启用 Zygisk，并在 LSPosed 启用「澎湃 SIM 卡余量查询」、勾选「手机管家」后重启。"
+  fi
 fi
 
-if [ "${KSU_HAS_HOT_INSTALL:-false}" = true ]; then
+if [ "${KSU:-false}" = true ] && [ "${KSU_HAS_HOT_INSTALL:-false}" = true ]; then
   export MODULE_HOT_INSTALL_REQUEST=true
   export MODULE_HOT_RUN_SCRIPT=hotinstall.sh
   if [ -e "$MODPATH/.refresh-panel" ]; then

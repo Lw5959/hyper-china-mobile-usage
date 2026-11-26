@@ -9,10 +9,19 @@ sed 's|^VECTOR=.*|VECTOR="$MODPATH/vector-cli"|' module/customize.sh > "$scratch
 verify_install() (
     framework=$1
     existing=${3:-false}
+    manager=${4:-kernelsu}
     case "$framework" in no_security_center) native_available=false ;; *) native_available=true ;; esac
     BOOTMODE=true
     KSU_HAS_HOT_INSTALL=$2
-    MODPATH="$scratch/$framework-$KSU_HAS_HOT_INSTALL-$existing"
+    expected_hot=false
+    if [ "$manager" = magisk ]; then
+        unset KSU
+        MAGISK_VER_CODE=28000
+    else
+        KSU=true
+        expected_hot=$KSU_HAS_HOT_INSTALL
+    fi
+    MODPATH="$scratch/$framework-$manager-$KSU_HAS_HOT_INSTALL-$existing"
     unset MODULE_HOT_INSTALL_REQUEST MODULE_HOT_RUN_SCRIPT
     mkdir "$MODPATH"
     printf '%s\n' 'test apk' > "$MODPATH/usage.apk"
@@ -67,8 +76,8 @@ EOF
     else
         grep -qxF 'settings --user 0 put secure enabled_accessibility_services li.songe.gkd/.A11yService:local.cmcc.usage/.MobileReader' "$test_log"
     fi
-    [ "${MODULE_HOT_INSTALL_REQUEST:-false}" = "$KSU_HAS_HOT_INSTALL" ]
-    if [ "$KSU_HAS_HOT_INSTALL" = true ]; then
+    [ "${MODULE_HOT_INSTALL_REQUEST:-false}" = "$expected_hot" ]
+    if [ "$expected_hot" = true ]; then
         [ "${MODULE_HOT_RUN_SCRIPT:-}" = hotinstall.sh ]
     else
         [ -z "${MODULE_HOT_RUN_SCRIPT:-}" ]
@@ -86,7 +95,11 @@ EOF
             ;;
         missing|stopped|rejected)
             [ ! -f "$MODPATH/.refresh-panel" ]
-            grep -qF 'Vector 或 LSPosed 管理器中启用' "$MODPATH/output"
+            if [ "$manager" = magisk ]; then
+                grep -qF 'Magisk 启用 Zygisk' "$MODPATH/output"
+            else
+                grep -qF 'Vector 或 LSPosed 管理器中启用' "$MODPATH/output"
+            fi
             ;;
     esac
 )
@@ -98,4 +111,6 @@ verify_install running true
 verify_install running false
 verify_install no_security_center true
 verify_install running true true
-printf '%s\n' '7 项安装兼容性检查通过，覆盖升级保留读取服务开关'
+verify_install missing false false magisk
+verify_install missing true true magisk
+printf '%s\n' '9 项安装兼容性检查通过，覆盖升级保留读取服务开关'

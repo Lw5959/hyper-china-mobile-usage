@@ -1,12 +1,13 @@
 #!/system/bin/sh
-BUSYBOX=/data/adb/ksu/bin/busybox
+MODDIR=${0%/*}
+. "$MODDIR/root-tools.sh"
+BUSYBOX=$(usage_busybox) || exit 1
 
 if [ "${1:-}" != --locked ]; then
   umask 077
   exec "$BUSYBOX" flock -n /data/adb/china_mobile_usage_panel.usage.lock /system/bin/sh "$0" --locked
 fi
 
-MODDIR=${0%/*}
 active() {
   [ -f "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ]
 }

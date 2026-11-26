@@ -4,7 +4,10 @@ import android.Manifest;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -13,6 +16,7 @@ import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -20,6 +24,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.telephony.SubscriptionManager;
 import android.text.format.DateFormat;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -32,6 +37,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Collections;
@@ -48,6 +54,7 @@ public final class SetupActivity extends Activity {
     private TextView balanceTime;
     private Button carrierButton;
     private Button authorize;
+    private Button exportLog;
     private Switch displaySwitch;
     private Switch launcherSwitch;
     private List<MobileSim.Card> cards = Collections.emptyList();
@@ -118,7 +125,7 @@ public final class SetupActivity extends Activity {
         addBelow(content, authorize, 7, -1);
 
         LinearLayout options = card();
-        displaySwitch = option("控制中心同步", "KernelSU 同步读数，手机管家扣减流量。");
+        displaySwitch = option("控制中心同步", "同步到「移动数据」，手机管家按系统用量扣减。");
         options.addView(displaySwitch);
         displaySwitch.setOnCheckedChangeListener((button, enabled) -> Snapshot.setPanelEnabled(this, enabled));
         View line = new View(this);
@@ -126,10 +133,12 @@ public final class SetupActivity extends Activity {
         LinearLayout.LayoutParams divider = new LinearLayout.LayoutParams(-1, dp(1));
         divider.setMargins(0, dp(6), 0, dp(6));
         options.addView(line, divider);
-        launcherSwitch = option("隐藏桌面图标", "从 KernelSU 模块的「操作」打开。");
+        launcherSwitch = option("隐藏桌面图标", "从模块管理器的「操作」打开。");
         options.addView(launcherSwitch);
         launcherSwitch.setOnCheckedChangeListener((button, hidden) -> toggleLauncher(hidden));
         addBelow(content, options, 17, -1);
+        exportLog = actionButton("导出读取日志", this::exportReaderLog, R.color.accent_surface, R.color.accent);
+        addBelow(content, exportLog, 12, -1);
         setContentView(viewport);
     }
 
@@ -241,6 +250,8 @@ public final class SetupActivity extends Activity {
                 0, 0, cards.size() > 1 ? R.drawable.ic_sim_dropdown : 0, 0);
         String status = !readerEnabled ? "读取服务未开启"
                 : reader ? "读取服务已开启 · 已连接" : "读取服务已开启 · 未连接";
+        String failure = reader && sim != null ? MobileReader.lastFailure(sim.carrier) : null;
+        if (failure != null) status += "\n" + failure;
         connection.setText(label + "\n" + status);
         connection.setClickable(sim != null);
         carrierButton.setVisibility(currentCarrier == null ? View.GONE : View.VISIBLE);
@@ -429,7 +440,44 @@ public final class SetupActivity extends Activity {
             Toast.makeText(this, "请先安装" + currentCarrier.label + " App", Toast.LENGTH_SHORT).show();
             return;
         }
+        ReaderLog.record(this, ReaderLog.Stage.SETUP, "从配套应用打开" + currentCarrier.label);
         startActivity(launch);
+    }
+
+    private void exportReaderLog() {
+        exportLog.setEnabled(false);
+        Carrier carrier = currentCarrier;
+        ReaderLog.record(this, ReaderLog.Stage.SETUP, "导出时服务已开启 " + readerAuthorized()
+                + "，已连接 " + readerConnected() + "，识别到 SIM " + cards.size() + " 张");
+        Context context = getApplicationContext();
+        new Thread(() -> {
+            try {
+                Uri file = ReaderLog.export(context, carrier);
+                runOnUiThread(() -> showExportedLog(file));
+            } catch (IOException | RuntimeException failure) {
+                Log.w("CmccUsagePanel", "导出读取日志失败", failure);
+                runOnUiThread(() -> showExportedLog(null));
+            }
+        }, "sim-usage-log-export").start();
+    }
+
+    private void showExportedLog(Uri file) {
+        if (isFinishing() || isDestroyed()) return;
+        exportLog.setEnabled(true);
+        if (file == null) {
+            Toast.makeText(this, "读取日志导出失败，请重试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "读取日志已保存到「下载」", Toast.LENGTH_SHORT).show();
+        if (!hasWindowFocus()) return;
+        Intent share = new Intent(Intent.ACTION_SEND).setType(ReaderLog.MIME_TYPE)
+                .putExtra(Intent.EXTRA_STREAM, file).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        share.setClipData(ClipData.newRawUri("读取日志", file));
+        try {
+            startActivity(Intent.createChooser(share, "分享读取日志"));
+        } catch (ActivityNotFoundException | SecurityException ignored) {
+            // 无法调起分享时，仍可从「下载」取文件。
+        }
     }
 
     private int dp(int value) {

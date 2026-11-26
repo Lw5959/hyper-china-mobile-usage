@@ -11,12 +11,28 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class CarrierReadings {
+    private static final int MAX_TEXT_LENGTH = 140;
+    private static final int MAX_MOBILE_DESCRIPTION_LENGTH = 2048;
     private static final String NUMBER = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,12})(?:\\.[0-9]{1,4})?";
     private static final String SIZE = "(" + NUMBER + ")\\s*(TB|GB|MB|KB|B)\\b";
     private static final Pattern REMAIN = Pattern.compile("剩余\\s*:?\\s*" + SIZE, Pattern.CASE_INSENSITIVE);
     private static final Pattern USED = Pattern.compile("已用\\s*:?\\s*" + SIZE, Pattern.CASE_INSENSITIVE);
-    private static final Pattern BALANCE_LABEL = Pattern.compile("^账户可用余额\\s*\\(元\\)");
-    private static final Pattern YUAN = Pattern.compile("(?:¥\\s*)?(-?" + NUMBER + ")\\s*元?");
+    private static final String YUAN_VALUE = "(?:¥\\s*)?(-?" + NUMBER + ")\\s*元?";
+    private static final Pattern YUAN = Pattern.compile(YUAN_VALUE);
+    private static final Pattern MOBILE_BALANCE = Pattern.compile(
+            "(?:账户可用余额|通用余额)\\s*\\(\\s*元\\s*\\)\\s*:?\\s*"
+                    + "(?:(?:\\?|(?:账户可用)?余额说明|说明)\\s*){0,2}" + YUAN_VALUE
+                    + "\\s*(?:充值\\s*[>›]?\\s*)?(?=$|本月已消费|其他余额|信控额度)");
+    private static final Pattern MOBILE_QUERY_TITLE = Pattern.compile(
+            "^(?:(?:返回|关闭|更多)[\\s,|:、·]*)*(余量查询|余额查询)(?=$|[\\s,|:、·])");
+    private static final Pattern MOBILE_SECTIONS = Pattern.compile(
+            "(?<!\\p{sc=Han})(?:(?:账户可用余额|通用余额)(?=\\s*\\(|$)"
+                    + "|(?:国内通用流量|定向流量|流量封顶|通话|通用账本|本月已消费|其他余额|信控额度|温馨提示)"
+                    + "(?=$|[^\\p{sc=Han}]|剩余|已用))");
+    private static final Pattern LINE_BREAK = Pattern.compile("\\R");
+    private static final Pattern CIRCLED_NUMBERS = Pattern.compile("[①-⑳]");
+    private static final List<String> MOBILE_MARKERS = List.of(
+            "余量查询", "余额查询", "国内通用流量", "账户可用余额", "通用余额", "本月已消费", "通用账本");
     private static final Pattern TELECOM_REMAIN = Pattern.compile("本月剩余\\s*:?\\s*" + SIZE,
             Pattern.CASE_INSENSITIVE);
     private static final Pattern TELECOM_USAGE = Pattern.compile("已用\\s*:?\\s*" + SIZE
@@ -48,8 +64,8 @@ final class CarrierReadings {
         List<String> text = normalize(input);
         // 首页卡片、充值页和套餐明细有相似数字。只承认查询页自己的汇总。
         if (carrier == Carrier.MOBILE) {
-            if (text.contains(carrier.trafficPage)) return trafficFromPage(text, "国内通用流量");
-            if (text.contains(carrier.balancePage)) return balanceFromPage(text);
+            CarrierReadings mobile = mobileFromPage(text);
+            return mobile != null ? mobile : mobileFromPage(mobileFields(input));
         } else if (carrier == Carrier.TELECOM) {
             if (text.stream().anyMatch(line -> line.contains("当前查询过于频繁"))) return null;
             if (text.contains(carrier.trafficPage)) return telecomTraffic(text);
@@ -90,13 +106,68 @@ final class CarrierReadings {
         List<String> text = new ArrayList<>(input.size());
         for (String item : input) {
             if (item == null) continue;
-            String cleaned = Normalizer.normalize(item.replaceAll("[①-⑳]", ""), Normalizer.Form.NFKC).trim();
-            if (!cleaned.isEmpty() && cleaned.length() <= 140
-                    && (text.isEmpty() || !text.get(text.size() - 1).equals(cleaned))) {
-                text.add(cleaned);
-            }
+            String cleaned = cleanNode(item).trim();
+            if (cleaned.length() <= MAX_TEXT_LENGTH) addField(text, cleaned);
         }
         return text;
+    }
+
+    private static CarrierReadings mobileFromPage(List<String> text) {
+        if (text.contains(Carrier.MOBILE.trafficPage)) return trafficFromPage(text, "国内通用流量");
+        return text.contains(Carrier.MOBILE.balancePage) ? balanceFromPage(text) : null;
+    }
+
+    static String mobileQueryTitle(List<String> input) {
+        List<String> fields = mobileFields(input);
+        boolean traffic = fields.contains(Carrier.MOBILE.trafficPage);
+        boolean balance = fields.contains(Carrier.MOBILE.balancePage);
+        if (traffic == balance) return null;
+        return traffic ? Carrier.MOBILE.trafficPage : Carrier.MOBILE.balancePage;
+    }
+
+    private static List<String> mobileFields(List<String> input) {
+        List<String> fields = new ArrayList<>(input.size());
+        for (String item : input) {
+            if (item == null || item.length() > MAX_MOBILE_DESCRIPTION_LENGTH) continue;
+            for (String line : LINE_BREAK.split(cleanNode(item))) {
+                String content = line.trim();
+                Matcher title = MOBILE_QUERY_TITLE.matcher(content);
+                if (title.find()) {
+                    addField(fields, title.group(1));
+                    content = content.substring(title.end());
+                }
+                // 合并的无障碍描述按查询页的固定标签拆开，避免把后续套餐或账本的数字并入汇总。
+                Matcher sections = MOBILE_SECTIONS.matcher(content);
+                int start = 0;
+                while (sections.find()) {
+                    addField(fields, content.substring(start, sections.start()).trim());
+                    addField(fields, sections.group());
+                    start = sections.end();
+                }
+                addField(fields, content.substring(start).trim());
+            }
+        }
+        return fields;
+    }
+
+    static String mobileEvidence(List<String> input) {
+        List<String> fields = mobileFields(input);
+        List<String> markers = new ArrayList<>();
+        for (String marker : MOBILE_MARKERS) {
+            if (fields.contains(marker)) markers.add(marker);
+        }
+        long longNodes = input.stream().filter(item -> item != null && item.length() > MAX_TEXT_LENGTH).count();
+        // 导出只写固定字段名和节点数量，便于区分标题缺失和汇总不全。
+        return "文本节点 " + input.size() + "，长文本 " + longNodes + "，标记 "
+                + (markers.isEmpty() ? "无" : String.join("、", markers));
+    }
+
+    private static String cleanNode(String value) {
+        return Normalizer.normalize(CIRCLED_NUMBERS.matcher(value).replaceAll(""), Normalizer.Form.NFKC);
+    }
+
+    private static void addField(List<String> text, String value) {
+        if (!value.isEmpty() && (text.isEmpty() || !text.get(text.size() - 1).equals(value))) text.add(value);
     }
 
     private static CarrierReadings trafficFromPage(List<String> text, String summaryLabel) {
@@ -173,22 +244,26 @@ final class CarrierReadings {
     }
 
     private static CarrierReadings balanceFromPage(List<String> text) {
-        for (int index = 0; index < text.size(); index++) {
+        int ledger = text.indexOf("通用账本");
+        int summaryEnd = ledger >= 0 ? ledger : text.size();
+        for (int index = 0; index < summaryEnd; index++) {
             String title = text.get(index);
-            Matcher label = BALANCE_LABEL.matcher(title);
-            if (!label.find()) continue;
-            Long cents = cents(title.substring(label.end()).trim());
-            if (cents == null) {
-                for (int next = index + 1; next < text.size() && next <= index + 3; next++) {
-                    String value = text.get(next);
-                    if (value.contains("充值") || value.contains("账单") || value.contains("券")) break;
-                    cents = cents(value);
-                    if (cents != null) break;
-                }
-            }
+            if (!title.startsWith("账户可用余额") && !title.startsWith("通用余额")) continue;
+            Long cents = mobileBalanceAt(text, index, summaryEnd);
             if (cents != null) {
                 return new CarrierReadings(AccountPhone.inHeader(text, index), null, -1, null, -1, -1, cents);
             }
+        }
+        return null;
+    }
+
+    private static Long mobileBalanceAt(List<String> text, int index, int summaryEnd) {
+        // WebView 可能拆开标题和单位，也可能合并整张卡片。按各字段的顺序取顶部汇总。
+        StringBuilder summary = new StringBuilder(text.get(index));
+        for (int next = index; next < Math.min(summaryEnd, index + 5); next++) {
+            if (next > index) summary.append(' ').append(text.get(next));
+            Matcher balance = MOBILE_BALANCE.matcher(summary);
+            if (balance.lookingAt()) return cents(balance.group(1));
         }
         return null;
     }

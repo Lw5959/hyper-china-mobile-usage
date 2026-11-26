@@ -12,4 +12,5 @@ javac --release 17 -Xlint:all -Werror -encoding UTF-8 -d "$test_dir" \
 java -cp "$test_dir" local.cmcc.usage.CarrierReadingsTest
 for script in module/*.sh; do sh -n "$script"; done
 sh tests/CustomizeTest.sh
+sh tests/RootToolsTest.sh
 sh tests/ReaderRestoreTest.sh
