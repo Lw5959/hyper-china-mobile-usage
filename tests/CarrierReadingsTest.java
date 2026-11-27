@@ -1,6 +1,8 @@
 package local.cmcc.usage;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 public final class CarrierReadingsTest {
     public static void main(String[] args) {
@@ -58,6 +60,7 @@ public final class CarrierReadingsTest {
         check(parse("余量查询", "定向流量", "剩余 0", "已用 24GB", "国内通用流量", "加载中") == null,
                 "忽略定向流量和缺失汇总");
         mobileCombinedPages();
+        mobileSharedTraffic();
         check("13812345678".equals(AccountPhone.chinaNumber("+86 138-1234-5678")), "统一系统手机号格式");
         check(AccountPhone.matchingIndex("138****5678", Arrays.asList("13987654321", "13812345678")) == 1,
                 "双移动卡按脱敏账号识别卡槽");
@@ -97,6 +100,38 @@ public final class CarrierReadingsTest {
                 && CarrierReadings.mobileQueryTitle(Arrays.asList("返回", "余量查询", "余额查询")) == null
                 && CarrierReadings.mobileQueryTitle(Arrays.asList("打开余额查询获取详单")) == null,
                 "只有明确且单一的查询标题才尝试恢复正文");
+    }
+
+    private static void mobileSharedTraffic() {
+        String[] details = {"国内通用流量 ?", "流量封顶服务", "全家享130G通用流量包", "可共享",
+                "已用: 55.86GB", "剩余: 74.14GB/130GB", "激活时间"};
+        CarrierReadings summary = CarrierReadings.parse(Carrier.MOBILE, withDetails(details,
+                "余量查询", "138****5678", "流量", "通话", "短彩信", "其他", "国内通用流量",
+                "剩余", "174.14", "GB", "已用", "75.86", "GB",
+                "共享流量", "剩余 174.14GB", "我已使用 26.64GB"));
+        check(summary != null && "174.14".equals(summary.trafficValue) && "250.00".equals(summary.totalGb)
+                && summary.totalBytes == 250L * 1024 * 1024 * 1024 && summary.usedBytes == 81_454_054_769L
+                && "138****5678".equals(summary.account), "共享套餐页面读取顶部 250 GB 汇总");
+        check(CarrierReadings.parse(Carrier.MOBILE, withDetails(details, "余量查询", "138****5678")) == null,
+                "顶部卡片缺失时拒绝使用单个套餐");
+        check(parse("余量查询", "138****5678", "国内通用流量", "剩余 174.14GB",
+                "共享流量 剩余 174.14GB 我已使用 26.64GB",
+                "国内通用流量", "剩余 74.14GB", "已用 55.86GB") == null,
+                "汇总缺少已用字段时不能借用共享行或套餐明细");
+        check(parse("余量查询", "138****5678", "国内通用流量", "已用 55.86GB", "剩余 74.14GB / 130GB") == null
+                && parse("余量查询", "138****5678", "国内通用流量 剩余 74.14GB/130GB 已用 55.86GB") == null,
+                "拒绝套餐明细的剩余斜杠总量");
+        CarrierReadings compact = parse("余额查询入口", "余量查询", "138****5678",
+                "国内通用流量剩余174.14GB已用75.86GB共享流量剩余174.14GB我已使用26.64GB");
+        check(compact != null && "250.00".equals(compact.totalGb), "紧凑的合并节点只读取顶部汇总");
+        CarrierReadings reversed = parse("余量查询", "138****5678", "国内通用流量", "已用 1GB", "剩余 2GB");
+        check(reversed != null && "3.00".equals(reversed.totalGb), "保留字段顺序不同的完整汇总");
+    }
+
+    private static List<String> withDetails(String[] details, String... fields) {
+        List<String> text = new ArrayList<>(Arrays.asList(fields));
+        text.addAll(Arrays.asList(details));
+        return text;
     }
 
     private static void telecomQueries() {

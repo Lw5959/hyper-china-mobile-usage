@@ -14,9 +14,20 @@ final class CarrierReadings {
     private static final int MAX_TEXT_LENGTH = 140;
     private static final int MAX_MOBILE_DESCRIPTION_LENGTH = 2048;
     private static final String NUMBER = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,12})(?:\\.[0-9]{1,4})?";
-    private static final String SIZE = "(" + NUMBER + ")\\s*(TB|GB|MB|KB|B)\\b";
+    private static final String SIZE_VALUE = "(" + NUMBER + ")\\s*(TB|GB|MB|KB|B)";
+    private static final String SIZE = SIZE_VALUE + "\\b";
     private static final Pattern REMAIN = Pattern.compile("剩余\\s*:?\\s*" + SIZE, Pattern.CASE_INSENSITIVE);
     private static final Pattern USED = Pattern.compile("已用\\s*:?\\s*" + SIZE, Pattern.CASE_INSENSITIVE);
+    private static final String MOBILE_TRAFFIC_LABEL = "国内通用流量";
+    private static final String FIELD_SEPARATOR = "[\\s,:|、·]*";
+    private static final String MOBILE_AMOUNT_END = "(?![a-z0-9.]|\\s*/)";
+    private static final String MOBILE_REMAIN = "剩余\\s*:?\\s*(?:" + SIZE_VALUE + "|0)" + MOBILE_AMOUNT_END;
+    private static final String MOBILE_USED = "已用\\s*:?\\s*" + SIZE_VALUE + MOBILE_AMOUNT_END;
+    private static final Pattern MOBILE_TRAFFIC = Pattern.compile(MOBILE_TRAFFIC_LABEL + FIELD_SEPARATOR
+            + "(?:" + MOBILE_REMAIN + FIELD_SEPARATOR + MOBILE_USED
+            + "|" + MOBILE_USED + FIELD_SEPARATOR + MOBILE_REMAIN + ")", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MOBILE_TRAFFIC_DETAILS = Pattern.compile(
+            "^(?:共享流量(?=$|\\s|[:|]|剩余|我已使用)|我已使用|流量封顶|可共享|(?:激活|失效)时间)");
     private static final String YUAN_VALUE = "(?:¥\\s*)?(-?" + NUMBER + ")\\s*元?";
     private static final Pattern YUAN = Pattern.compile(YUAN_VALUE);
     private static final Pattern MOBILE_BALANCE = Pattern.compile(
@@ -27,7 +38,7 @@ final class CarrierReadings {
             "^(?:(?:返回|关闭|更多)[\\s,|:、·]*)*(余量查询|余额查询)(?=$|[\\s,|:、·])");
     private static final Pattern MOBILE_SECTIONS = Pattern.compile(
             "(?<!\\p{sc=Han})(?:(?:账户可用余额|通用余额)(?=\\s*\\(|$)"
-                    + "|(?:国内通用流量|定向流量|流量封顶|通话|通用账本|本月已消费|其他余额|信控额度|温馨提示)"
+                    + "|(?:国内通用流量|共享流量|我已使用|定向流量|流量封顶|通话|通用账本|本月已消费|其他余额|信控额度|温馨提示)"
                     + "(?=$|[^\\p{sc=Han}]|剩余|已用))");
     private static final Pattern LINE_BREAK = Pattern.compile("\\R");
     private static final Pattern CIRCLED_NUMBERS = Pattern.compile("[①-⑳]");
@@ -61,12 +72,16 @@ final class CarrierReadings {
     }
 
     static CarrierReadings parse(Carrier carrier, List<String> input) {
-        List<String> text = normalize(input);
         // 首页卡片、充值页和套餐明细有相似数字。只承认查询页自己的汇总。
         if (carrier == Carrier.MOBILE) {
-            CarrierReadings mobile = mobileFromPage(text);
-            return mobile != null ? mobile : mobileFromPage(mobileFields(input));
-        } else if (carrier == Carrier.TELECOM) {
+            List<String> fields = mobileFields(input);
+            if (fields.contains(carrier.trafficPage)) return mobileTraffic(fields);
+            if (!fields.contains(carrier.balancePage)) return null;
+            CarrierReadings balance = balanceFromPage(normalize(input));
+            return balance != null ? balance : balanceFromPage(fields);
+        }
+        List<String> text = normalize(input);
+        if (carrier == Carrier.TELECOM) {
             if (text.stream().anyMatch(line -> line.contains("当前查询过于频繁"))) return null;
             if (text.contains(carrier.trafficPage)) return telecomTraffic(text);
             if (text.contains(carrier.balancePage) && text.contains("余额说明")) {
@@ -110,11 +125,6 @@ final class CarrierReadings {
             if (cleaned.length() <= MAX_TEXT_LENGTH) addField(text, cleaned);
         }
         return text;
-    }
-
-    private static CarrierReadings mobileFromPage(List<String> text) {
-        if (text.contains(Carrier.MOBILE.trafficPage)) return trafficFromPage(text, "国内通用流量");
-        return text.contains(Carrier.MOBILE.balancePage) ? balanceFromPage(text) : null;
     }
 
     static String mobileQueryTitle(List<String> input) {
@@ -170,6 +180,34 @@ final class CarrierReadings {
         if (!value.isEmpty() && (text.isEmpty() || !text.get(text.size() - 1).equals(value))) text.add(value);
     }
 
+    private static CarrierReadings mobileTraffic(List<String> text) {
+        for (int index = 0; index < text.size(); index++) {
+            String title = text.get(index);
+            if (MOBILE_TRAFFIC_DETAILS.matcher(title).find()) break;
+            if (!title.startsWith(MOBILE_TRAFFIC_LABEL)) continue;
+            StringBuilder summary = new StringBuilder(title);
+            for (int next = index + 1; next < text.size() && next <= index + 12; next++) {
+                String part = text.get(next);
+                if (MOBILE_TRAFFIC_DETAILS.matcher(part).find() || part.startsWith(MOBILE_TRAFFIC_LABEL)
+                        || part.startsWith("定向流量") || part.startsWith("通话")) break;
+                summary.append(' ').append(part);
+            }
+            // 顶部蓝卡的剩余与已用相邻。共享行和下方单包不能用来补齐两个字段，
+            // 尤其是单包的「剩余/总额」，其剩余量前缀看起来和汇总相同。
+            Matcher values = MOBILE_TRAFFIC.matcher(summary);
+            if (!values.lookingAt()) continue;
+            // 前四组用于「剩余、已用」，后四组用于节点顺序互换的情况。
+            boolean usedFirst = values.group(5) != null;
+            Amount used = amount(values, usedFirst ? 5 : 3);
+            if (used == null) continue;
+            int remainingGroup = usedFirst ? 7 : 1;
+            Amount remaining = values.group(remainingGroup) == null
+                    ? new Amount(BigDecimal.ZERO, used.unit) : amount(values, remainingGroup);
+            if (remaining != null) return trafficReading(text, index, remaining, used);
+        }
+        return null;
+    }
+
     private static CarrierReadings trafficFromPage(List<String> text, String summaryLabel) {
         for (int index = 0; index < text.size(); index++) {
             String title = text.get(index);
@@ -198,14 +236,16 @@ final class CarrierReadings {
                 continue;
             }
             if (remaining == null) continue;
-            String total = remaining.gigabytes().add(usedAmount.gigabytes())
-                    .setScale(2, RoundingMode.HALF_UP).toPlainString();
-            long usedBytes = usedAmount.bytes();
-            return new CarrierReadings(AccountPhone.inHeader(text, index),
-                    remaining.value.toPlainString(), remaining.unit, total, remaining.bytes() + usedBytes,
-                    usedBytes, null);
+            return trafficReading(text, index, remaining, usedAmount);
         }
         return null;
+    }
+
+    private static CarrierReadings trafficReading(List<String> text, int index, Amount remaining, Amount used) {
+        String total = remaining.gigabytes().add(used.gigabytes()).setScale(2, RoundingMode.HALF_UP).toPlainString();
+        long usedBytes = used.bytes();
+        return new CarrierReadings(AccountPhone.inHeader(text, index),
+                remaining.value.toPlainString(), remaining.unit, total, remaining.bytes() + usedBytes, usedBytes, null);
     }
 
     private static CarrierReadings telecomTraffic(List<String> text) {

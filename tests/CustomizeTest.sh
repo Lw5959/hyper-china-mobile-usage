@@ -3,27 +3,31 @@ set -eu
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
-# 保持安装逻辑一致，测试只替换 Vector 的设备专属绝对路径。
-sed 's|^VECTOR=.*|VECTOR="$MODPATH/vector-cli"|' module/customize.sh > "$scratch/customize.sh"
+# 保持安装逻辑一致，测试只替换设备上的命令和临时目录路径。
+sed -e 's|^VECTOR=.*|VECTOR="$MODPATH/vector-cli"|' -e 's|^PM=.*|PM=pm|' \
+    -e 's|^APK_TMP_PARENT=.*|APK_TMP_PARENT="$MODPATH/tmp"|' \
+    module/customize.sh > "$scratch/customize.sh"
 
 verify_install() (
     framework=$1
     existing=${3:-false}
     manager=${4:-kernelsu}
+    behavior=${5:-normal}
     case "$framework" in no_security_center) native_available=false ;; *) native_available=true ;; esac
     BOOTMODE=true
     KSU_HAS_HOT_INSTALL=$2
     expected_hot=false
     if [ "$manager" = magisk ]; then
         unset KSU
-        MAGISK_VER_CODE=28000
+        MAGISK_VER_CODE=31100
     else
         KSU=true
         expected_hot=$KSU_HAS_HOT_INSTALL
     fi
-    MODPATH="$scratch/$framework-$manager-$KSU_HAS_HOT_INSTALL-$existing"
+    MODPATH="$scratch/$framework-$manager-$KSU_HAS_HOT_INSTALL-$existing-$behavior"
     unset MODULE_HOT_INSTALL_REQUEST MODULE_HOT_RUN_SCRIPT
     mkdir "$MODPATH"
+    mkdir "$MODPATH/tmp"
     printf '%s\n' 'test apk' > "$MODPATH/usage.apk"
     cp module/reader.sh "$MODPATH/reader.sh"
     test_log="$MODPATH/commands"
@@ -50,8 +54,36 @@ EOF
                     [ "$native_available" = true ]
                 fi
                 ;;
-            install) cat > "$MODPATH/installed.apk" ;;
-            grant) return 0 ;;
+            install)
+                if [ "$5" = -S ]; then
+                    [ "$6" = 9 ] && [ "$#" = 6 ] || return 1
+                    case "$behavior" in
+                        different_signature)
+                            printf '%s\n' 'Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]' >&2
+                            return 1
+                            ;;
+                        file_retry|file_retry_fails)
+                            printf '%s\n' 'Failure [Unable to stream APK]' >&2
+                            return 1
+                            ;;
+                    esac
+                    cat > "$MODPATH/installed.apk"
+                else
+                    case "$5" in "$MODPATH"/tmp/sim-usage.*/base.apk) ;; *) return 1 ;; esac
+                    if [ "$behavior" = file_retry_fails ]; then
+                        printf '%s\n' 'Failure [INSTALL_FAILED_INVALID_APK]' >&2
+                        return 1
+                    fi
+                    cp "$5" "$MODPATH/installed.apk"
+                fi
+                ;;
+            grant)
+                if [ "$behavior" = grant_denied ] && [ "$5" = android.permission.READ_PHONE_NUMBERS ]; then
+                    printf '%s\n' 'SecurityException: grant denied' >&2
+                    return 1
+                fi
+                return 0
+                ;;
             *) return 1 ;;
         esac
     }
@@ -67,11 +99,34 @@ EOF
     ui_print() { printf '%s\n' "$1"; }
     abort() { printf '%s\n' "$1" >&2; exit 1; }
 
-    . "$scratch/customize.sh" > "$MODPATH/output"
+    if [ "$behavior" = different_signature ] || [ "$behavior" = file_retry_fails ]; then
+        if (. "$scratch/customize.sh") > "$MODPATH/output" 2>&1; then return 1; fi
+        ! grep -q '^pm grant ' "$test_log"
+        [ -z "$(ls -A "$MODPATH/tmp")" ]
+        if [ "$behavior" = different_signature ]; then
+            grep -qF 'INSTALL_FAILED_UPDATE_INCOMPATIBLE' "$MODPATH/output"
+            grep -qF '签名不同' "$MODPATH/output"
+            ! grep -qF '改用临时文件' "$MODPATH/output"
+        else
+            grep -qF 'INSTALL_FAILED_INVALID_APK' "$MODPATH/output"
+            grep -qF '请保存以上安装日志' "$MODPATH/output"
+        fi
+        return 0
+    fi
+
+    . "$scratch/customize.sh" > "$MODPATH/output" 2>&1
     cmp "$MODPATH/usage.apk" "$MODPATH/installed.apk"
+    [ -z "$(ls -A "$MODPATH/tmp")" ]
+    if [ "$behavior" = file_retry ]; then
+        grep -qF 'Unable to stream APK' "$MODPATH/output"
+        grep -qF '改用临时文件' "$MODPATH/output"
+    fi
     grep -qxF 'pm grant --user 0 local.cmcc.usage android.permission.READ_PHONE_STATE' "$test_log"
     grep -qxF 'pm grant --user 0 local.cmcc.usage android.permission.READ_PHONE_NUMBERS' "$test_log"
-    if [ "$existing" = true ]; then
+    if [ "$behavior" = grant_denied ]; then
+        grep -qF '请打开配套应用授予电话权限' "$MODPATH/output"
+        ! grep -q '^settings ' "$test_log"
+    elif [ "$existing" = true ]; then
         ! grep -q '^settings ' "$test_log"
     else
         grep -qxF 'settings --user 0 put secure enabled_accessibility_services li.songe.gkd/.A11yService:local.cmcc.usage/.MobileReader' "$test_log"
@@ -113,4 +168,8 @@ verify_install no_security_center true
 verify_install running true true
 verify_install missing false false magisk
 verify_install missing true true magisk
-printf '%s\n' '9 项安装兼容性检查通过，覆盖升级保留读取服务开关'
+verify_install missing false false magisk file_retry
+verify_install missing false true magisk different_signature
+verify_install missing false true magisk file_retry_fails
+verify_install missing false false magisk grant_denied
+printf '%s\n' '13 项安装兼容性检查通过，覆盖升级保留读取服务开关'

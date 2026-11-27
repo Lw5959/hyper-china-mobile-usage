@@ -8,7 +8,7 @@
 
 支持 KernelSU 和 Magisk。需要对应的运营商 App，控制中心显示需要 Vector 或 LSPosed。中国移动路径已在 REDMI K90 Pro Max（`OS4.0.6.0.XPMCNXM`，KernelSU + Vector）和 Xiaomi 15S Pro（`OS4.0.5.0.XODCNXM`，KernelSU + LSPosed）验证。
 
-1. 在 KernelSU 或 Magisk 安装同一个模块 ZIP。Magisk 使用 LSPosed 时先启用 Zygisk。确认 Vector 或 LSPosed 已启用「澎湃 SIM 卡余量查询」，作用域勾选「手机管家」，然后重启。
+1. 在 KernelSU 或 Magisk 的模块页面选择发布附件中的模块 ZIP。Magisk 使用 LSPosed 时先启用 Zygisk。确认 Vector 或 LSPosed 已启用「澎湃 SIM 卡余量查询」，作用域勾选「手机管家」，然后重启。
 2. 确认无障碍服务「澎湃 SIM 卡余量查询」已连接。登录运营商 App，从首页打开流量和话费查询页。
 3. 下拉控制中心，打开「移动数据」。手机管家设为「每月固定流量」时，会用查询结果校正套餐，再按这张卡的系统用量扣减。
 
